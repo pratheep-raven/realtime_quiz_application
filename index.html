@@ -1,0 +1,193 @@
+// ----- server.js -----
+const http = require("http");
+const express = require("express");
+const { Server } = require("socket.io");
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+
+// Serve the quiz app
+app.get("/", (req, res) => {
+  res.send(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Realtime Quiz App</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background: #0d1117;
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: start;
+    height: 100vh;
+    margin: 0;
+    padding-top: 40px;
+  }
+  h1 {
+    color: #58a6ff;
+  }
+  .quiz-container {
+    background: #161b22;
+    border-radius: 10px;
+    padding: 20px 30px;
+    width: 90%;
+    max-width: 500px;
+    box-shadow: 0 0 10px rgba(255,255,255,0.1);
+  }
+  .question {
+    font-size: 20px;
+    margin-bottom: 15px;
+  }
+  .options button {
+    display: block;
+    width: 100%;
+    background: #21262d;
+    border: 1px solid #30363d;
+    color: #c9d1d9;
+    padding: 10px;
+    margin: 5px 0;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+  }
+  .options button:hover {
+    background: #238636;
+    color: #fff;
+  }
+  #result {
+    margin-top: 20px;
+    font-size: 18px;
+  }
+  #scores {
+    margin-top: 20px;
+    background: #161b22;
+    border-radius: 8px;
+    padding: 10px;
+    width: 90%;
+    max-width: 400px;
+  }
+</style>
+</head>
+<body>
+  <h1>Realtime Quiz</h1>
+  <div class="quiz-container">
+    <div class="question" id="question">Loading question...</div>
+    <div class="options" id="options"></div>
+    <div id="result"></div>
+  </div>
+  <div id="scores">
+    <h3>Live Scores</h3>
+    <ul id="scoreList"></ul>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    const questionEl = document.getElementById('question');
+    const optionsEl = document.getElementById('options');
+    const resultEl = document.getElementById('result');
+    const scoreListEl = document.getElementById('scoreList');
+
+    let username = prompt("Enter your name:");
+    if (!username) username = "Guest" + Math.floor(Math.random() * 1000);
+    socket.emit("join", username);
+
+    socket.on("question", (q) => {
+      questionEl.textContent = q.question;
+      optionsEl.innerHTML = "";
+      resultEl.textContent = "";
+      q.options.forEach((opt) => {
+        const btn = document.createElement("button");
+        btn.textContent = opt;
+        btn.onclick = () => socket.emit("answer", { user: username, answer: opt });
+        optionsEl.appendChild(btn);
+      });
+    });
+
+    socket.on("result", (data) => {
+      if (data.correct) {
+        resultEl.textContent = "✅ Correct!";
+        resultEl.style.color = "#2ea043";
+      } else {
+        resultEl.textContent = "❌ Wrong! Correct answer: " + data.correctAnswer;
+        resultEl.style.color = "#f85149";
+      }
+    });
+
+    socket.on("scores", (scores) => {
+      scoreListEl.innerHTML = "";
+      for (const [user, score] of Object.entries(scores)) {
+        const li = document.createElement("li");
+        li.textContent = user + ": " + score;
+        scoreListEl.appendChild(li);
+      }
+    });
+  </script>
+</body>
+</html>
+  `);
+});
+
+// Quiz questions
+const questions = [
+  {
+    question: "What is the capital of France?",
+    options: ["Paris", "Berlin", "Madrid", "Rome"],
+    answer: "Paris"
+  },
+  {
+    question: "Which language runs in a web browser?",
+    options: ["Java", "C", "Python", "JavaScript"],
+    answer: "JavaScript"
+  },
+  {
+    question: "Who created Node.js?",
+    options: ["Ryan Dahl", "Elon Musk", "Mark Zuckerberg", "Bill Gates"],
+    answer: "Ryan Dahl"
+  }
+];
+
+let currentQuestionIndex = 0;
+let scores = {};
+
+function sendQuestion() {
+  io.emit("question", questions[currentQuestionIndex]);
+}
+
+io.on("connection", (socket) => {
+  console.log("A user connected");
+
+  socket.on("join", (username) => {
+    socket.username = username;
+    if (!scores[username]) scores[username] = 0;
+    socket.emit("scores", scores);
+    sendQuestion();
+  });
+
+  socket.on("answer", (data) => {
+    const question = questions[currentQuestionIndex];
+    const correct = data.answer === question.answer;
+    if (correct) scores[data.user] = (scores[data.user] || 0) + 1;
+    socket.emit("result", { correct, correctAnswer: question.answer });
+    io.emit("scores", scores);
+
+    // Move to next question after short delay
+    setTimeout(() => {
+      currentQuestionIndex = (currentQuestionIndex + 1) % questions.length;
+      sendQuestion();
+    }, 2000);
+  });
+
+  socket.on("disconnect", () => {
+    console.log("A user disconnected");
+  });
+});
+
+const PORT = 3000;
+server.listen(PORT, () => console.log("Quiz app running at http://localhost:" + PORT));
